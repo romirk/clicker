@@ -20,10 +20,11 @@ class SusClient:
     client_mac: CipherContext
     server_mac: CipherContext
 
-    server_addr: tuple[str, int]
+    conn_addr: tuple[str, int]
 
     def __init__(self, host: str, port: int, ppks: X25519PublicKey, app_id: bytes):
-        self.addr = host
+        self.host = host
+        self.port = port
         self.ppks = ppks
         self.app_id = app_id
 
@@ -36,10 +37,14 @@ class SusClient:
 
         # udp socket
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp.connect((host, port))
+        udp.setblocking(False)
+        udp.settimeout(5)
         self.__udp = udp
 
         self.mtu_estimate = 1024  # TODO: implement mtu estimation
+
+    def __del__(self):
+        self.close()
 
     def connection_made(self, auto_complete=False):
         # 1. Generate a new ephemeral key pair (eskc, epkc)
@@ -50,11 +55,13 @@ class SusClient:
         nc = urandom(8)
 
         # 3. send (epkc, nc) to server
-        self.__udp.send(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc)
+        self.__udp.sendto(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc, (self.host, self.port))
         print("sent keys")
 
         # 4. receive (epks, ns) from server
-        epks_ns, self.server_addr = self.__udp.recvfrom(40)
+        epks_ns, self.conn_addr = self.__udp.recvfrom(40)
+        print("received keys, starting handshake on port", self.conn_addr[1])
+
         epks = X25519PublicKey.from_public_bytes(epks_ns[:32])
         ns = epks_ns[32:]
 
@@ -87,12 +94,13 @@ class SusClient:
         message_bytes = self.token + self.encrypt(data, len(self.token))
         payloads = self.split_message(message_bytes)
 
+        print(f"Sending {len(payloads)} packets")
         for payload in payloads:
             p = poly1305.Poly1305(self.client_mac.update(b"\x00" * 32))
             frame = self.client_packet_id.to_bytes(8, "little") + payload
             p.update(frame)
             frame += p.finalize()
-            self.__udp.sendto(frame, self.server_addr)
+            self.__udp.sendto(frame, self.conn_addr)
             self.client_packet_id += 1
 
     def encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
@@ -102,3 +110,19 @@ class SusClient:
                 packet_length - ((len(message_bytes) + len_assoc_data) % packet_length))
 
         return self.client_enc.update(padded_message_bytes)
+
+    def send(self, data: bytes):
+        message_bytes = self.encrypt(data)
+        payloads = self.split_message(message_bytes)
+
+        print(f"Sending {len(payloads)} packets")
+        for payload in payloads:
+            p = poly1305.Poly1305(self.client_mac.update(b"\x00" * 32))
+            frame = self.client_packet_id.to_bytes(8, "little") + payload
+            p.update(frame)
+            frame += p.finalize()
+            self.__udp.sendto(frame, self.conn_addr)
+            self.client_packet_id += 1
+
+    def close(self):
+        self.__udp.close()
