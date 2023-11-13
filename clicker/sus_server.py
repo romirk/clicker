@@ -109,6 +109,7 @@ class SusServer:
 
     async def start(self):
         self.logger.info("Starting server")
+        self.logger.info(f"public key: {self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex()}")
 
         server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server.bind((self.ip, self.port))

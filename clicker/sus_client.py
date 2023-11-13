@@ -51,6 +51,7 @@ class SusClient:
 
         # 3. send (epkc, nc) to server
         self.__udp.send(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc)
+        print("sent keys")
 
         # 4. receive (epks, ns) from server
         epks_ns, self.server_addr = self.__udp.recvfrom(40)
