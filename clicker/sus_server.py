@@ -14,7 +14,6 @@ from clicker.globals import CLIENT_ENC_NONCE, SERVER_ENC_NONCE, CLIENT_MAC_NONCE
 
 
 class ConnectionProtocolState(Enum):
-    INITIAL = 0
     HANDSHAKE = 1
     CONNECTED = 2
     DISCONNECTED = 3
@@ -38,7 +37,7 @@ class ConnectionProtocol(asyncio.DatagramProtocol):
     client_mac: CipherContext
     server_mac: CipherContext
 
-    def __init__(self, psks: X25519PrivateKey, ppks: X25519PublicKey):
+    def __init__(self, psks: X25519PrivateKey, ppks: X25519PublicKey, addr: tuple[str, int], data: bytes):
         super().__init__()
         self.psks = psks
         self.ppks = ppks
@@ -46,7 +45,18 @@ class ConnectionProtocol(asyncio.DatagramProtocol):
         self.logger.info("New connection")
         self.shutdown = asyncio.Event()
 
-        self.state = ConnectionProtocolState.INITIAL
+        self.esks = X25519PrivateKey.generate()
+        self.epks = self.esks.public_key()
+
+        self.ns = urandom(8)
+
+        self.epkc = X25519PublicKey.from_public_bytes(data[:32])
+        self.nc = data[32:]
+
+        self.transport.sendto(self.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) + self.ns, addr)
+
+        self.state = ConnectionProtocolState.HANDSHAKE
+
 
     def connection_made(self, transport: asyncio.DatagramTransport):
         self.transport = transport
@@ -55,19 +65,6 @@ class ConnectionProtocol(asyncio.DatagramProtocol):
         self.logger.info(f"Received {data} from {addr}")
 
         match self.state:
-            case ConnectionProtocolState.INITIAL:
-                self.esks = X25519PrivateKey.generate()
-                self.epks = self.esks.public_key()
-
-                self.ns = urandom(8)
-
-                self.epkc = X25519PublicKey.from_public_bytes(data[:32])
-                self.nc = data[32:]
-
-                self.transport.sendto(self.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) + self.ns, addr)
-
-                self.state = ConnectionProtocolState.HANDSHAKE
-
             case ConnectionProtocolState.HANDSHAKE:
                 self.token = blake3(self.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
                                     self.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) + self.nc + self.ns).digest()
@@ -95,9 +92,9 @@ class ConnectionProtocol(asyncio.DatagramProtocol):
                 self.state = ConnectionProtocolState.CONNECTED
 
 
-async def handle_client(sock: socket.socket, psks: X25519PrivateKey, ppks: X25519PublicKey):
+async def handle_client(sock: socket.socket, data: bytes, addr: tuple[str, int], psks: X25519PrivateKey, ppks: X25519PublicKey):
     loop = asyncio.get_running_loop()
-    transport, protocol = await loop.create_datagram_endpoint(lambda: ConnectionProtocol(psks, ppks), sock=sock)
+    transport, protocol = await loop.create_datagram_endpoint(lambda: ConnectionProtocol(psks, ppks, addr, data), sock=sock)
 
 
 class SusServer:
@@ -115,9 +112,11 @@ class SusServer:
 
         server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server.bind((self.ip, self.port))
-        while self.shutdown.is_set():
-            sock, _ = server.accept()
-            await handle_client(sock, self.psks, self.ppks)
+        while not self.shutdown.is_set():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind((self.ip, 0))
+            data, addr = sock.recvfrom(40)
+            await handle_client(sock, data, addr, self.psks, self.ppks)
 
 
 if __name__ == '__main__':
