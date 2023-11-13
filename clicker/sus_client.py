@@ -8,10 +8,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, CipherContext
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-CLIENT_ENC_NONCE = b"cliqencc"
-SERVER_ENC_NONCE = b"cliqencs"
-CLIENT_MAC_NONCE = b"cliqmacc"
-SERVER_MAC_NONCE = b"cliqmacs"
+from clicker.globals import CLIENT_ENC_NONCE, SERVER_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_MAC_NONCE
 
 
 class SusClient:
@@ -22,6 +19,8 @@ class SusClient:
     server_enc: CipherContext
     client_mac: CipherContext
     server_mac: CipherContext
+
+    server_addr: tuple[str, int]
 
     def __init__(self, host: str, port: int, ppks: X25519PublicKey, app_id: bytes):
         self.addr = host
@@ -42,7 +41,7 @@ class SusClient:
 
         self.mtu_estimate = 1024  # TODO: implement mtu estimation
 
-    def handshake(self, auto_complete=False):
+    def connection_made(self, auto_complete=False):
         # 1. Generate a new ephemeral key pair (eskc, epkc)
         eskc = X25519PrivateKey.generate()
         epkc = eskc.public_key()
@@ -54,7 +53,7 @@ class SusClient:
         self.__udp.send(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc)
 
         # 4. receive (epks, ns) from server
-        epks_ns = self.__udp.recv(40)
+        epks_ns, self.server_addr = self.__udp.recvfrom(40)
         epks = X25519PublicKey.from_public_bytes(epks_ns[:32])
         ns = epks_ns[32:]
 
@@ -92,7 +91,7 @@ class SusClient:
             frame = self.client_packet_id.to_bytes(8, "little") + payload
             p.update(frame)
             frame += p.finalize()
-            self.__udp.send(frame)
+            self.__udp.sendto(frame, self.server_addr)
             self.client_packet_id += 1
 
     def encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
