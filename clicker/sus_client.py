@@ -50,6 +50,28 @@ class SusClient:
     def __del__(self):
         self.close()
 
+    def __encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
+        message_bytes = len(data).to_bytes(4, "little") + data
+        packet_length = self.mtu_estimate - 24
+        padded_message_bytes = message_bytes + b"\x00" * (
+                packet_length - ((len(message_bytes) + len_assoc_data) % packet_length))
+
+        ciphertext = self.client_enc.update(padded_message_bytes)
+        self.logger.debug(f"--- {trail_off(ciphertext.hex())}")
+        return ciphertext
+
+    def __tag_and_send(self, data: bytes):
+        payloads = self.split_message(data)
+
+        self.logger.info(f"Sending {len(data)} bytes as {len(payloads)} packet(s)")
+        for payload in payloads:
+            key = self.client_mac.update(b"\x00" * 32)
+            p_id = self.client_packet_id.to_bytes(8, "little")
+            frame = p_id + payload
+            tag = poly1305.Poly1305.generate_tag(key, frame)
+            self.__udp.sendto(frame + tag, self.conn_addr)
+            self.client_packet_id += 1
+
     def connection_made(self, auto_complete=False):
         # 1. Generate a new ephemeral key pair (eskc, epkc)
         eskc = X25519PrivateKey.generate()
@@ -82,7 +104,7 @@ class SusClient:
 
         self.client_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).encryptor()
         self.server_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).decryptor()
-        self.client_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
+        self.client_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).encryptor()
         self.server_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).decryptor()
 
         # 7. compute token = H(epkc, epks, nc, ns)
@@ -96,35 +118,13 @@ class SusClient:
         packet_length = self.mtu_estimate - 24
         return [data[i:i + packet_length] for i in range(0, len(data), packet_length)]
 
-    def __encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
-        message_bytes = len(data).to_bytes(4, "little") + data
-        packet_length = self.mtu_estimate - 24
-        padded_message_bytes = message_bytes + b"\x00" * (
-                packet_length - ((len(message_bytes) + len_assoc_data) % packet_length))
-
-        ciphertext = self.client_enc.update(padded_message_bytes)
-        self.logger.debug(f"--- {trail_off(ciphertext.hex())}")
-        return ciphertext
-
-    def __tag_and_send(self, data: bytes):
-        payloads = self.split_message(data)
-
-        self.logger.info(f"Sending {len(data)} bytes as {len(payloads)} packet(s)")
-        for payload in payloads:
-            key = self.client_mac.update(b"\x00" * 32)
-            p_id = self.client_packet_id.to_bytes(8, "little")
-            frame = p_id + payload
-            tag = poly1305.Poly1305.generate_tag(key, frame)
-            self.__udp.sendto(frame + tag, self.conn_addr)
-            self.client_packet_id += 1
-
     def complete_handshake_and_send(self, data: bytes):
         message_bytes = self.token + self.__encrypt(data, len(self.token))
         self.__tag_and_send(message_bytes)
         self.logger.info("handshake complete")
 
     def send(self, data: bytes):
-        self.logger.debug(f">>> {data}")
+        self.logger.debug(f"<<< {data}")
         message_bytes = self.__encrypt(data)
         self.__tag_and_send(message_bytes)
 

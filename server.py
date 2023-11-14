@@ -12,6 +12,8 @@ if __name__ == "__main__":
     try:
         loop.run_until_complete(server.start())
     except KeyboardInterrupt:
-        print("Shutting down")
         loop.run_until_complete(server.stop())
+    finally:
+        loop.close()
+    print("done")
     exit(0)

@@ -35,3 +35,9 @@ class ClientManager:
                 self.remove_client(client)
             else:
                 client.check_alive()
+
+    def stop_all(self):
+        self.logger.info("Stopping all clients...")
+        for client in self.clients:
+            client.disconnect()
+        self.logger.info("Stopped all clients.")

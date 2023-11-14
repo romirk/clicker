@@ -17,6 +17,7 @@ class SusServer:
 
         self.logger = logging.getLogger("gatekeeper")
         self.shutdown = asyncio.Event()
+        self.manager = ClientManager()
 
     async def start(self):
         self.logger.info("Starting server")
@@ -29,14 +30,13 @@ class SusServer:
         server.setblocking(False)
         server.settimeout(1)
         server.bind((self.ip, self.port))
-        handler = ClientManager()
 
         self.logger.info(f"Listening on {self.ip}:{self.port}")
         counter = 0
         while not self.shutdown.is_set():
             counter = (counter + 1) % 10
             if counter == 0:
-                await handler.clean()
+                await self.manager.clean()
             else:
                 await asyncio.sleep(1)  # let other tasks run TODO: remove this
             try:
@@ -44,9 +44,12 @@ class SusServer:
             except socket.timeout:
                 continue
             self.logger.info(f"{addr} - {data.hex()}")
-            await handler.handle_client(data, addr, self.psks, self.ppks)
+            await self.manager.handle_client(data, addr, self.psks, self.ppks)
 
-        self.logger.info("Shutting down")
+        self.manager.stop_all()
+        self.logger.info("Server stopped")
 
     async def stop(self):
+        self.logger.warning("Shutting down")
         self.shutdown.set()
+        self.manager.stop_all()

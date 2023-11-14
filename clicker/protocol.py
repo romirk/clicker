@@ -92,10 +92,12 @@ class ClickerProtocol(asyncio.DatagramProtocol):
             self.state = ConnectionProtocolState.ERROR
             self.disconnect()
             return None
-
+        if p_id == 0:
+            payload = payload[32:]
+            self.logger.debug(f"--- {trail_off(payload.hex())}")
         message_bytes = self.client_enc.update(payload)
         message_length = int.from_bytes(message_bytes[:4], "little")
-        message = message_bytes[4:]
+        message = message_bytes[4:message_length + 4]
         self.logger.info(f"Received message {p_id} ({message_length} bytes)")
         return message
 
@@ -132,7 +134,7 @@ class ClickerProtocol(asyncio.DatagramProtocol):
                 # noinspection DuplicatedCode
                 self.client_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).decryptor()
                 self.server_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).encryptor()
-                self.client_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).encryptor()
+                self.client_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
                 self.server_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).encryptor()
 
                 self.state = ConnectionProtocolState.CONNECTED
@@ -144,7 +146,8 @@ class ClickerProtocol(asyncio.DatagramProtocol):
 
             case ConnectionProtocolState.CONNECTED:
                 message = self.__verify_and_decrypt(data)
-                self.logger.info(f"{addr} {trail_off(message.hex())}")
+                self.logger.info(f"{addr[0]}:{addr[1]} >>> "
+                                 f"{trail_off(message.decode('utf-8')) if message else None}")
 
     def disconnect(self):
         self.logger.warning("Disconnecting...")
