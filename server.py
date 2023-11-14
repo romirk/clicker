@@ -4,7 +4,7 @@ from logging import basicConfig, DEBUG
 from clicker import SusServer
 
 if __name__ == "__main__":
-    basicConfig(level=DEBUG)
+    basicConfig(level=DEBUG, format="%(asctime)s | %(name)s - %(levelname)s : %(message)s")
     server = SusServer("0.0.0.0", 42069)
 
     loop = asyncio.get_event_loop()

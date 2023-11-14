@@ -32,8 +32,13 @@ class SusServer:
         handler = ClientManager()
 
         self.logger.info(f"Listening on {self.ip}:{self.port}")
+        counter = 0
         while not self.shutdown.is_set():
-            await asyncio.sleep(1)  # let other tasks run TODO: remove this
+            counter = (counter + 1) % 10
+            if counter == 0:
+                await handler.clean()
+            else:
+                await asyncio.sleep(1)  # let other tasks run TODO: remove this
             try:
                 data, addr = server.recvfrom(40)
             except socket.timeout:
