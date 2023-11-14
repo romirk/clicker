@@ -1,12 +1,11 @@
-from logging import DEBUG, basicConfig
-
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 from clicker import SusClient
+from clicker.util import logger_config
 
 
 def main():
-    basicConfig(level=DEBUG, format="%(asctime)s | %(name)s - %(levelname)s : %(message)s")
+    logger_config()
     with open("server.pub", "r") as f:
         ppks_bytes = bytes.fromhex(key := f.read())
         print(f"Using public key {key}")
