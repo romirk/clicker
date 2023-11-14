@@ -1,4 +1,5 @@
 import argparse
+from time import sleep
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
@@ -10,7 +11,7 @@ def main(host: str, port: int, key: str):
     logger_config()
     with open(key, "r") as f:
         ppks_bytes = bytes.fromhex(key := f.read())
-        print(f"Using public key {key}")
+        print(f"Using public key \033[36m{key}\033[0m")
     ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
     client = SusClient(host, port, ppks, b"cliq")
     client.start()
@@ -18,7 +19,8 @@ def main(host: str, port: int, key: str):
         exit(1)
     client.send(b"hello world")
     client.send(b"goodbye world")
-    client.keep_alive()
+    # client.keep_alive()
+    sleep(5)
     exit(0)
 
 
