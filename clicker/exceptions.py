@@ -1,0 +1,2 @@
+class MalformedKeyRequest(Exception):
+    pass

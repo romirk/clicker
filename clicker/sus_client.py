@@ -25,8 +25,7 @@ class SusClient:
     conn_addr: tuple[str, int]
 
     def __init__(self, host: str, port: int, ppks: X25519PublicKey, app_id: bytes):
-        self.host = host
-        self.port = port
+        self.server_addr = (host, port)
         self.ppks = ppks
         self.app_id = app_id
 
@@ -81,15 +80,17 @@ class SusClient:
         nc = urandom(8)
 
         # 3. send (epkc, nc) to server
-        self.__udp.sendto(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc, (self.host, self.port))
+        self.__udp.sendto(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc, self.server_addr)
         self.logger.info("sent keys")
 
-        # 4. receive (epks, ns) from server
-        epks_ns, self.conn_addr = self.__udp.recvfrom(40)
-        self.logger.info("received keys, starting handshake on port %s", self.conn_addr[1])
+        # 4. receive (epks, ns, port) from server
+        epks_ns_port = self.__udp.recv(42)
 
-        epks = X25519PublicKey.from_public_bytes(epks_ns[:32])
-        ns = epks_ns[32:]
+        epks = X25519PublicKey.from_public_bytes(epks_ns_port[:32])
+        ns = epks_ns_port[32:40]
+        port = int.from_bytes(epks_ns_port[40:], "little", signed=False)
+        self.conn_addr = (self.server_addr[0], port)
+        self.logger.info("received keys, starting handshake on port %s", port)
 
         # 5. compute ecps = X25519(eskc, ppks)
         ecps = eskc.exchange(self.ppks)
