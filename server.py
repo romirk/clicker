@@ -1,12 +1,15 @@
+import argparse
 import asyncio
-import os
 
 from clicker import SusServer
 from clicker.util import logger_config
 
-if __name__ == "__main__":
+
+def main(key_file: str):
     logger_config()
-    server = SusServer("0.0.0.0", 42069, os.environ.get("CLICKER_SECRET_KEY", None))
+    with open(key_file, "r") as f:
+        psks_bytes = bytes.fromhex(key := f.read())
+    server = SusServer("0.0.0.0", 42069, psks_bytes)
 
     loop = asyncio.get_event_loop()
 
@@ -18,3 +21,10 @@ if __name__ == "__main__":
         loop.close()
     print("done")
     exit(0)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Clicker server")
+    parser.add_argument("key", type=str, default="server.key", help="key file")
+    args = parser.parse_args()
+    main(args.key)

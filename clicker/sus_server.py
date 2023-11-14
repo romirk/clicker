@@ -9,17 +9,17 @@ from clicker.manager import ClientManager
 
 
 class SusServer:
-    def __init__(self, ip: str, port: int, psks: str = None):
+    def __init__(self, ip: str, port: int, psks: bytes):
         self.ip = ip
         self.port = port
-        self.psks = X25519PrivateKey.generate() if psks is None else X25519PrivateKey.from_private_bytes(
-            bytes.fromhex(psks))
+        self.logger = logging.getLogger("gatekeeper")
+
+        self.psks = X25519PrivateKey.from_private_bytes(psks)
         self.ppks = self.psks.public_key()
 
         with open("server.pub", "w") as f:
             f.write(self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex())
 
-        self.logger = logging.getLogger("gatekeeper")
         self.shutdown = asyncio.Event()
         self.manager = ClientManager()
 

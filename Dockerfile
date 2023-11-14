@@ -10,6 +10,6 @@ RUN     pip install -r requirements.txt
 COPY    . .
 
 RUN     --mount=type=secret,id=clicker_secret_key \
-        echo "CLICKER_SECRET_KEY=$(cat /run/secrets/clicker_secret_key)" > /etc/environment \
+        cat /run/secrets/clicker_secret_key > ./server.key
 
-CMD     ["python", "server.py"]
+CMD     ["python", "server.py", "/usr/src/clicker/server.key"]
