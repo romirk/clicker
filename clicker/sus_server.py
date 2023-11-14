@@ -22,6 +22,9 @@ class SusServer:
         self.logger.info("Starting server")
         self.logger.info(f"public key: {self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex()}")
 
+        with open("server.pub", "w") as f:
+            f.write(self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex())
+
         server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server.setblocking(False)
         server.settimeout(1)
@@ -29,19 +32,14 @@ class SusServer:
         handler = ClientManager()
 
         self.logger.info(f"Listening on {self.ip}:{self.port}")
-        try:
-            while not self.shutdown.is_set():
-                try:
-                    data, addr = server.recvfrom(40)
-                except socket.timeout:
-                    continue
-                self.logger.info(f"Received {data.hex()} from {addr}")
-                await handler.handle_client(data, addr, self.psks, self.ppks)
-        except asyncio.CancelledError:
-            self.logger.info("Keyboard interrupt")
-        finally:
-            server.close()
-            self.logger.info("Server stopped")
+        while not self.shutdown.is_set():
+            await asyncio.sleep(1)  # let other tasks run TODO: remove this
+            try:
+                data, addr = server.recvfrom(40)
+            except socket.timeout:
+                continue
+            self.logger.info(f"{addr} - {data.hex()}")
+            await handler.handle_client(data, addr, self.psks, self.ppks)
 
         self.logger.info("Shutting down")
 

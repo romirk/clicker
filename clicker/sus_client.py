@@ -94,7 +94,6 @@ class SusClient:
         message_bytes = self.token + self.encrypt(data, len(self.token))
         payloads = self.split_message(message_bytes)
 
-        print(f"Sending {len(payloads)} packets")
         for payload in payloads:
             p = poly1305.Poly1305(self.client_mac.update(b"\x00" * 32))
             frame = self.client_packet_id.to_bytes(8, "little") + payload
@@ -102,6 +101,8 @@ class SusClient:
             frame += p.finalize()
             self.__udp.sendto(frame, self.conn_addr)
             self.client_packet_id += 1
+
+        print("handshake complete")
 
     def encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
         message_bytes = len(data).to_bytes(4, "little") + data
@@ -115,7 +116,7 @@ class SusClient:
         message_bytes = self.encrypt(data)
         payloads = self.split_message(message_bytes)
 
-        print(f"Sending {len(payloads)} packets")
+        print(f"Sending {len(message_bytes)} bytes as {len(payloads)} packet(s)")
         for payload in payloads:
             p = poly1305.Poly1305(self.client_mac.update(b"\x00" * 32))
             frame = self.client_packet_id.to_bytes(8, "little") + payload

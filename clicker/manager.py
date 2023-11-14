@@ -13,12 +13,12 @@ class ClientManager:
         self.clients: set[ClickerProtocol] = set()
 
     def add_client(self, client: ClickerProtocol):
-        self.logger.info(f"New client {client.addr}")
         self.clients.add(client)
+        self.logger.info(f"{client.addr} connected. {len(self.clients)} client(s) online.")
 
     def remove_client(self, client: ClickerProtocol):
-        self.logger.info(f"Client {client.addr} disconnected")
         self.clients.remove(client)
+        self.logger.info(f"{client.addr} disconnected. {len(self.clients)} client(s) online.")
 
     async def handle_client(self, data: bytes, addr: tuple[str, int], psks: X25519PrivateKey,
                             ppks: X25519PublicKey):

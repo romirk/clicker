@@ -4,11 +4,14 @@ from clicker import SusClient
 
 
 def main():
-    ppks_bytes = bytes.fromhex("ede93541b9bf0e29bc03f88fd2257525d225af16842bcd92931bfd77d664066e")
+    with open("server.pub", "r") as f:
+        ppks_bytes = bytes.fromhex(key := f.read())
+        print(f"Using public key {key}")
     ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
     client = SusClient("localhost", 42069, ppks, b"app_id")
     client.connection_made(True)
     client.send(b"hello world")
+    client.send(b"goodbye world")
     client.close()
     exit(0)
 
