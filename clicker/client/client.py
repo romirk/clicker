@@ -9,8 +9,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, CipherContext
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.util import trail_off
+from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
+from clicker.common.util import trail_off
 
 
 class SusClient:

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from datetime import datetime
-from enum import Enum
 from typing import Callable
 
 from blake3 import blake3
@@ -11,19 +10,11 @@ from cryptography.hazmat.primitives.ciphers import Cipher, CipherContext
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.util import Wallet, trail_off
+from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
+from clicker.common.util import ConnectionProtocolState, Wallet, trail_off
 
 
-class ConnectionProtocolState(Enum):
-    ERROR = -1
-    INITIAL = 0
-    HANDSHAKE = 1
-    CONNECTED = 2
-    DISCONNECTED = 3
-
-
-class ClickerProtocol(asyncio.DatagramProtocol):
+class ClickerServerProtocol(asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport
 
     cl_enc: CipherContext
@@ -39,11 +30,19 @@ class ClickerProtocol(asyncio.DatagramProtocol):
         self.wallet = wallet
         self.on_close = on_close
 
-        self.logger = logging.getLogger(f"clicker{ClickerProtocol.counter:03d}")
+        self.logger = logging.getLogger(f"clicker{ClickerServerProtocol.counter:03d}")
 
         self.state = ConnectionProtocolState.INITIAL
         self.last_seen = datetime.now().timestamp()
-        ClickerProtocol.counter += 1
+
+        self.client_message_id = 0
+        self.server_message_id = 0
+        self.client_packet_id = 0
+        self.server_packet_id = 0
+
+        self.mtu_estimate = 1500
+
+        ClickerServerProtocol.counter += 1
 
     def connection_made(self, transport: asyncio.DatagramTransport):
         self.transport = transport
@@ -64,14 +63,35 @@ class ClickerProtocol(asyncio.DatagramProtocol):
         except InvalidSignature:
             self.logger.error("Invalid signature")
             return None
+
+        # special case for first packet
         if p_id == 0:
             payload = payload[32:]
             self.logger.debug(f"--- {trail_off(payload.hex())}")
+
         message_bytes = self.cl_enc.update(payload)
         message_length = int.from_bytes(message_bytes[:4], "little")
         message = message_bytes[4:message_length + 4]
         self.logger.info(f"Received message {p_id} ({message_length} bytes)")
+        self.last_seen = datetime.now().timestamp()
+        self.client_packet_id = p_id
         return message
+
+    def __encrypt_and_tag(self, data: bytes) -> bytes:
+        message_bytes = len(data).to_bytes(4, "little") + data
+        packet_length = self.mtu_estimate - 24
+        padded_message_bytes = message_bytes + b"\x00" * (
+                packet_length - ((len(message_bytes) + 0) % packet_length))
+
+        ciphertext = self.sr_enc.update(padded_message_bytes)
+        self.logger.debug(f"--- {trail_off(ciphertext.hex())}")
+
+        key = self.sr_mac.update(b"\x00" * 32)
+        p_id = self.server_packet_id.to_bytes(8, "little")
+        frame = p_id + ciphertext
+        tag = poly1305.Poly1305.generate_tag(key, frame)
+        self.server_packet_id += 1
+        return frame + tag
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]):
 
@@ -127,6 +147,10 @@ class ClickerProtocol(asyncio.DatagramProtocol):
                 message = self.__verify_and_decrypt(data)
                 self.logger.info(f"{addr[0]}:{addr[1]} >>> "
                                  f"{trail_off(message.decode('utf-8')) if message else None}")
+
+                # for now, just echo back
+                if message:
+                    self.transport.sendto(self.__encrypt_and_tag(message), addr)
 
     def disconnect(self):
         self.logger.warning("Disconnecting...")

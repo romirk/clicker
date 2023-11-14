@@ -3,7 +3,7 @@ import argparse
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 from clicker import SusClient
-from clicker.util import logger_config
+from clicker.common.util import logger_config
 
 
 def main(host: str, port: int, key: str):

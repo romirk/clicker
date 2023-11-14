@@ -1,5 +1,4 @@
-from .sus_client import SusClient
-from .sus_server import SusServer
+from clicker.client import SusClient
+from clicker.server import SusServer
 
 __all__ = ["SusClient", "SusServer"]
-

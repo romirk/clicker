@@ -5,9 +5,9 @@ from os import urandom
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.exceptions import MalformedKeyRequest
-from clicker.protocol import ClickerProtocol, ConnectionProtocolState
-from clicker.util import Wallet
+from clicker.common.exceptions import MalformedKeyRequest
+from clicker.server.protocol import ClickerServerProtocol
+from clicker.common.util import ConnectionProtocolState, Wallet
 
 
 class ClientManager:
@@ -16,13 +16,13 @@ class ClientManager:
         self.logger = logging.getLogger("susmanager")
         self.psks = psks
         self.ppks = ppks
-        self.clients: set[ClickerProtocol] = set()
+        self.clients: set[ClickerServerProtocol] = set()
 
-    def add_client(self, client: ClickerProtocol):
+    def add_client(self, client: ClickerServerProtocol):
         self.clients.add(client)
         self.logger.info(f"{len(self.clients)} client(s) online.")
 
-    def remove_client(self, client: ClickerProtocol):
+    def remove_client(self, client: ClickerServerProtocol):
         self.clients.remove(client)
         self.logger.info(f"{len(self.clients)} client(s) online.")
 
@@ -53,7 +53,7 @@ class ClientManager:
         # assign port to client
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.create_datagram_endpoint(
-            lambda: ClickerProtocol(wallet, lambda _: self.remove_client(protocol)),
+            lambda: ClickerServerProtocol(wallet, lambda _: self.remove_client(protocol)),
             ("0.0.0.0", 0))
         self.add_client(protocol)
 

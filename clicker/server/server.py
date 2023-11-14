@@ -5,8 +5,8 @@ import socket
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.exceptions import MalformedKeyRequest
-from clicker.manager import ClientManager
+from clicker.common.exceptions import MalformedKeyRequest
+from clicker.server.manager import ClientManager
 
 
 class SusServer:

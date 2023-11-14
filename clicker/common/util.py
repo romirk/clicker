@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from logging import DEBUG, basicConfig
 from typing import Optional
 
@@ -30,3 +31,11 @@ class Wallet:
 
     token: Optional[bytes]
     shared_secret: Optional[bytes]
+
+
+class ConnectionProtocolState(Enum):
+    ERROR = -1
+    INITIAL = 0
+    HANDSHAKE = 1
+    CONNECTED = 2
+    DISCONNECTED = 3

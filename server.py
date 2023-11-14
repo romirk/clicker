@@ -2,7 +2,7 @@ import argparse
 import asyncio
 
 from clicker import SusServer
-from clicker.util import logger_config
+from clicker.common.util import logger_config
 
 
 def main(key_file: str):
@@ -11,6 +11,7 @@ def main(key_file: str):
         psks_bytes = bytes.fromhex(key := f.read())
     server = SusServer("0.0.0.0", 42069, psks_bytes)
 
+    # create event loop
     loop = asyncio.get_event_loop()
 
     try:
