@@ -142,7 +142,7 @@ class ClickerProtocol(asyncio.DatagramProtocol):
                 self.logger.debug("Handshake complete")
 
                 message = self.__verify_and_decrypt(data)
-                self.logger.info(f"{addr} {trail_off(message.hex())}")
+                self.logger.info(f"protocol: {message.decode('utf-8')}")
 
             case ConnectionProtocolState.CONNECTED:
                 message = self.__verify_and_decrypt(data)

@@ -10,7 +10,7 @@ def main():
         ppks_bytes = bytes.fromhex(key := f.read())
         print(f"Using public key {key}")
     ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
-    client = SusClient("localhost", 42069, ppks, b"app_id")
+    client = SusClient("localhost", 42069, ppks, b"cliq")
     client.connection_made(True)
     client.send(b"hello world")
     client.send(b"goodbye world")

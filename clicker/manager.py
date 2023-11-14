@@ -29,6 +29,8 @@ class ClientManager:
         self.add_client(protocol)
 
     async def clean(self):
+        if not self.clients:
+            return
         self.logger.info("Cleaning up dead clients...")
         for client in self.clients:
             if client.state in (ConnectionProtocolState.DISCONNECTED, ConnectionProtocolState.ERROR):
