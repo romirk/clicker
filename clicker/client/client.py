@@ -1,133 +1,116 @@
+import asyncio
 import logging
 import socket
 from os import urandom
 
 from blake3 import blake3
-from cryptography.hazmat.primitives import poly1305
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers import Cipher, CipherContext
-from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import trail_off
+from clicker.client.protocol import ClickerClientProtocol
+from clicker.common.util import ConnectionProtocolState, Wallet
 
 
 class SusClient:
-    token: bytes
-    shared_secret: bytes
+    protocol: ClickerClientProtocol
 
-    client_enc: CipherContext
-    server_enc: CipherContext
-    client_mac: CipherContext
-    server_mac: CipherContext
-
-    conn_addr: tuple[str, int]
-
-    def __init__(self, host: str, port: int, ppks: X25519PublicKey, app_id: bytes):
+    def __init__(self, host: str, port: int, ppks: X25519PublicKey, protocol_id: bytes):
         self.server_addr = (host, port)
         self.ppks = ppks
-        self.app_id = app_id
+        self.protocol_id = protocol_id
 
-        self.logger = logging.getLogger(f"clicker-cl")
-
-        self.client_message_id = 0
-        self.server_message_id = 0
-        self.client_packet_id = 0
-        self.server_packet_id = 0
-
-        self.stream = bytearray()
-
-        # udp socket
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp.setblocking(False)
-        udp.settimeout(5)
-        self.__udp = udp
-
-        self.mtu_estimate = 1024  # TODO: implement mtu estimation
+        self.logger = logging.getLogger(f"susclicker")
 
     def __del__(self):
-        self.close()
+        self.disconnect()
 
-    def __encrypt(self, data: bytes, len_assoc_data=0) -> bytes:
-        message_bytes = len(data).to_bytes(4, "little") + data
-        packet_length = self.mtu_estimate - 24
-        padded_message_bytes = message_bytes + b"\x00" * (
-                packet_length - ((len(message_bytes) + len_assoc_data) % packet_length))
+    @property
+    def connected(self):
+        return hasattr(self, "protocol") and self.protocol.state == ConnectionProtocolState.CONNECTED
 
-        ciphertext = self.client_enc.update(padded_message_bytes)
-        self.logger.debug(f"--- {trail_off(ciphertext.hex())}")
-        return ciphertext
+    def start(self):
+        try:
+            asyncio.get_event_loop().run_until_complete(self.connect())
+        except KeyboardInterrupt:
+            self.logger.info("interrupted")
+        # finally:
+        #     self.disconnect()
 
-    def __tag_and_send(self, data: bytes):
-        payloads = self.split_message(data)
-
-        self.logger.info(f"Sending {len(data)} bytes as {len(payloads)} packet(s)")
-        for payload in payloads:
-            key = self.client_mac.update(b"\x00" * 32)
-            p_id = self.client_packet_id.to_bytes(8, "little")
-            frame = p_id + payload
-            tag = poly1305.Poly1305.generate_tag(key, frame)
-            self.__udp.sendto(frame + tag, self.conn_addr)
-            self.client_packet_id += 1
-
-    def connection_made(self, auto_complete=False):
-        # 1. Generate a new ephemeral key pair (eskc, epkc)
-        eskc = X25519PrivateKey.generate()
-        epkc = eskc.public_key()
-
-        # 2. generate nonce (nc) [8 bytes]
-        nc = urandom(8)
-
-        # 3. send (epkc, nc) to server
-        self.__udp.sendto(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc, self.server_addr)
-        self.logger.info("sent keys")
+    def __key_exchange(self, epks_ns_port: bytes, wallet: Wallet):
 
         # 4. receive (epks, ns, port) from server
-        epks_ns_port = self.__udp.recv(42)
-
-        epks = X25519PublicKey.from_public_bytes(epks_ns_port[:32])
-        ns = epks_ns_port[32:40]
+        wallet.epks = X25519PublicKey.from_public_bytes(epks_ns_port[:32])
+        wallet.ns = epks_ns_port[32:40]
         port = int.from_bytes(epks_ns_port[40:], "little", signed=False)
         self.conn_addr = (self.server_addr[0], port)
         self.logger.info("received keys, starting handshake on port %s", port)
-
         # 5. compute ecps = X25519(eskc, ppks)
-        ecps = eskc.exchange(self.ppks)
-        eces = eskc.exchange(epks)
-
+        ecps = wallet.eskc.exchange(wallet.ppks)
+        eces = wallet.eskc.exchange(wallet.epks)
         # 6. compute key = H(eces, ecps, nc, ns, ppks, epks, epkc)
-        self.shared_secret = blake3(
-            eces + ecps + nc + ns + self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) + epks.public_bytes(
-                Encoding.Raw, PublicFormat.Raw) + epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
-
-        self.logger.info("shared secret: %s", self.shared_secret.hex())
-
-        self.client_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).encryptor()
-        self.server_enc = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).decryptor()
-        self.client_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).encryptor()
-        self.server_mac = Cipher(ChaCha20(self.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).decryptor()
+        wallet.shared_secret = blake3(
+            eces + ecps + wallet.nc + wallet.ns +
+            wallet.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
+        self.logger.info("shared secret: %s", wallet.shared_secret.hex())
 
         # 7. compute token = H(epkc, epks, nc, ns)
-        self.token = blake3(epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-                            epks.public_bytes(Encoding.Raw, PublicFormat.Raw) + nc + ns).digest()
+        wallet.token = blake3(wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+                              wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+                              wallet.nc + wallet.ns).digest()
+        return port, wallet
 
-        if auto_complete:
-            self.complete_handshake_and_send(self.app_id)
+    async def connect(self):
+        self.logger.info(f"connecting to server ({self.server_addr[0]}:{self.server_addr[1]})")
 
-    def split_message(self, data: bytes) -> list[bytes]:
-        packet_length = self.mtu_estimate - 24
-        return [data[i:i + packet_length] for i in range(0, len(data), packet_length)]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(self.server_addr)
 
-    def complete_handshake_and_send(self, data: bytes):
-        message_bytes = self.token + self.__encrypt(data, len(self.token))
-        self.__tag_and_send(message_bytes)
-        self.logger.info("handshake complete")
+        eskc = X25519PrivateKey.generate()
+        epkc = eskc.public_key()
+        nc = urandom(8)
+        wallet = Wallet(None, self.ppks, None, None, None, eskc, epkc, nc, None, None)
+
+        try:
+            sock.send(wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) + wallet.nc)
+            data = sock.recv(42)
+        except ConnectionRefusedError:
+            self.logger.error("Connection refused")
+            return
+        except TimeoutError:
+            self.logger.error("Connection timed out")
+            return
+
+        port, wallet = self.__key_exchange(data, wallet)
+
+        self.logger.info("received keys, starting handshake on port %s", port)
+
+        _, self.protocol = await asyncio.get_event_loop().create_datagram_endpoint(
+            lambda: ClickerClientProtocol(wallet, self.protocol_id),
+            remote_addr=(self.server_addr[0], port)
+        )
+        await self.protocol.handshake_event.wait()
 
     def send(self, data: bytes):
-        self.logger.debug(f"<<< {data}")
-        message_bytes = self.__encrypt(data)
-        self.__tag_and_send(message_bytes)
+        if not self.protocol:
+            self.logger.warning("not connected to server")
+            return
+        self.protocol.send(data)
 
-    def close(self):
-        self.__udp.close()
+    def disconnect(self):
+        if not hasattr(self, "protocol"):
+            self.logger.warning("not connected to server")
+            return
+        self.protocol.disconnect()
+        self.logger.info(f"disconnected from server ({self.server_addr[0]}:{self.server_addr[1]})")
+
+    def keep_alive(self):
+        if not hasattr(self, "protocol"):
+            self.logger.warning("not connected to server")
+            return
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(self.protocol.diconnection_event.wait())
+        except KeyboardInterrupt:
+            self.logger.info("exiting...")

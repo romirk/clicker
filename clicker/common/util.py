@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from logging import DEBUG, basicConfig
 from typing import Optional
@@ -16,17 +17,21 @@ def logger_config():
     basicConfig(level=DEBUG, format="%(asctime)s | %(name)s - %(levelname)8s : %(message)s")
 
 
+def now():
+    return datetime.now().timestamp()
+
+
 @dataclass
 class Wallet:
     psks: Optional[X25519PrivateKey]
     ppks: X25519PublicKey
 
     esks: Optional[X25519PrivateKey]
-    epks: X25519PublicKey
+    epks: Optional[X25519PublicKey]
     ns: Optional[bytes]
 
     eskc: Optional[X25519PrivateKey]
-    epkc: X25519PublicKey
+    epkc: Optional[X25519PublicKey]
     nc: Optional[bytes]
 
     token: Optional[bytes]

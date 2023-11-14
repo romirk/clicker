@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import ConnectionProtocolState, Wallet, trail_off
+from clicker.common.util import ConnectionProtocolState, Wallet, now, trail_off
 
 
 class ClickerServerProtocol(asyncio.DatagramProtocol):
@@ -33,7 +33,7 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
         self.logger = logging.getLogger(f"clicker{ClickerServerProtocol.counter:03d}")
 
         self.state = ConnectionProtocolState.INITIAL
-        self.last_seen = datetime.now().timestamp()
+        self.last_seen = now()
 
         self.client_message_id = 0
         self.server_message_id = 0
@@ -93,10 +93,32 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
         self.server_packet_id += 1
         return frame + tag
 
+    def __key_exchange(self):
+        wallet = self.wallet
+        eces = wallet.esks.exchange(wallet.epkc)
+        ecps = wallet.psks.exchange(wallet.epkc)
+        wallet.shared_secret = blake3(
+            eces + ecps + wallet.nc + wallet.ns +
+            wallet.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
+        self.logger.debug(f"shared_secret: {wallet.shared_secret.hex()}")
+        # noinspection DuplicatedCode
+        self.cl_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).decryptor()
+        self.sr_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).encryptor()
+        self.cl_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
+        self.sr_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).encryptor()
+
     def datagram_received(self, data: bytes, addr: tuple[str, int]):
 
         match self.state:
             case ConnectionProtocolState.HANDSHAKE:
+                if len(data) < 40:
+                    self.logger.error("Invalid handshake packet")
+                    self.state = ConnectionProtocolState.ERROR
+                    self.disconnect()
+                    return
+
                 wallet = self.wallet
                 wallet.token = blake3(wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
                                       wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
@@ -114,25 +136,9 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
                     return
                 self.logger.debug("token: OK")
 
-                eces = wallet.esks.exchange(wallet.epkc)
-                ecps = wallet.psks.exchange(wallet.epkc)
-
-                wallet.shared_secret = blake3(
-                    eces + ecps + wallet.nc + wallet.ns +
-                    wallet.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-                    wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-                    wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
-
-                self.logger.debug(f"shared_secret: {wallet.shared_secret.hex()}")
-
-                # noinspection DuplicatedCode
-                self.cl_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).decryptor()
-                self.sr_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).encryptor()
-                self.cl_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
-                self.sr_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).encryptor()
+                self.__key_exchange()
 
                 self.state = ConnectionProtocolState.CONNECTED
-                self.last_seen = datetime.now().timestamp()
                 self.logger.debug("Handshake complete")
 
                 message = self.__verify_and_decrypt(data)
@@ -151,6 +157,8 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
                 # for now, just echo back
                 if message:
                     self.transport.sendto(self.__encrypt_and_tag(message), addr)
+
+        self.last_seen = now()
 
     def disconnect(self):
         self.logger.warning("Disconnecting...")

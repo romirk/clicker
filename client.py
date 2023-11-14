@@ -13,10 +13,12 @@ def main(host: str, port: int, key: str):
         print(f"Using public key {key}")
     ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
     client = SusClient(host, port, ppks, b"cliq")
-    client.connection_made(True)
+    client.start()
+    if not client.connected:
+        exit(1)
     client.send(b"hello world")
     client.send(b"goodbye world")
-    client.close()
+    client.keep_alive()
     exit(0)
 
 
