@@ -1,10 +1,13 @@
 import argparse
-from time import sleep
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 from clicker import SusClient
 from clicker.common.util import logger_config
+
+
+def msg_handler(msg_id: int, msg: bytes):
+    print(f"Received message {msg_id}: {msg.decode()}")
 
 
 def main(host: str, port: int, key: str):
@@ -14,13 +17,12 @@ def main(host: str, port: int, key: str):
         print(f"Using public key \033[36m{key}\033[0m")
     ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
     client = SusClient(host, port, ppks, b"cliq")
-    client.start()
+    client.start([msg_handler])
     if not client.connected:
         exit(1)
     client.send(b"hello world")
     client.send(b"goodbye world")
-    # client.keep_alive()
-    sleep(5)
+    client.keep_alive()
     exit(0)
 
 

@@ -1,19 +1,20 @@
 import asyncio
 import logging
-from typing import Tuple
+from typing import Any, Callable, Iterable, Optional
 
 from cryptography.hazmat.primitives import poly1305
 from cryptography.hazmat.primitives.ciphers import Cipher
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 
 from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import ConnectionProtocolState, Wallet, now, trail_off
+from clicker.common.util import ConnectionProtocolState, Handler, Wallet, now, trail_off
 
 
 class ClickerClientProtocol(asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport
 
-    def __init__(self, wallet: Wallet, protcol_id: bytes):
+    def __init__(self, wallet: Wallet, protcol_id: bytes,
+                 handlers: Optional[Iterable[Handler]] = None):
         super().__init__()
 
         self.wallet = wallet
@@ -36,8 +37,12 @@ class ClickerClientProtocol(asyncio.DatagramProtocol):
 
         self.mtu_estimate = 1500
 
+        self.message_handlers: set[Handler] = set(handlers or [])
         self.handshake_event = asyncio.Event()
         self.diconnection_event = asyncio.Event()
+
+    def add_message_handler(self, handler: Handler):
+        self.message_handlers.add(handler)
 
     def connection_made(self, transport: asyncio.DatagramTransport):
         self.transport = transport
@@ -54,6 +59,7 @@ class ClickerClientProtocol(asyncio.DatagramProtocol):
             case ConnectionProtocolState.CONNECTED:
                 pid, message = self.__verify_and_decrypt(data)
                 self.logger.info(f">>> {trail_off(message.decode('utf-8')) if message else None}")
+                self.handle_message(pid, message)
 
     def __verify_and_decrypt(self, data: bytes) -> tuple[None, None] | tuple[int, bytes]:
         try:
@@ -120,3 +126,11 @@ class ClickerClientProtocol(asyncio.DatagramProtocol):
         self.logger.warning("Connection to server lost")
         self.state = ConnectionProtocolState.ERROR
         self.diconnection_event.set()
+
+    def handle_message(self, pid, message):
+        for handler in self.message_handlers:
+            try:
+                handler(pid, message)
+            except Exception as e:
+                self.logger.exception(e)
+                self.logger.error("Error in message handler. See traceback above.")

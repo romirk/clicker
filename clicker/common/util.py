@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from logging import DEBUG, basicConfig
-from typing import Optional
+from typing import Any, Callable, Optional, Type
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
+Handler: Type = Callable[[int, bytes], Any]
 
 
 def trail_off(msg: str, length: int = 40):

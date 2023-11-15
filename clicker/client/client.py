@@ -2,13 +2,14 @@ import asyncio
 import logging
 import socket
 from os import urandom
+from typing import Iterable
 
 from blake3 import blake3
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from clicker.client.protocol import ClickerClientProtocol
-from clicker.common.util import ConnectionProtocolState, Wallet
+from clicker.common.util import ConnectionProtocolState, Handler, Wallet
 
 
 class SusClient:
@@ -28,13 +29,15 @@ class SusClient:
     def connected(self):
         return hasattr(self, "protocol") and self.protocol.state == ConnectionProtocolState.CONNECTED
 
-    def start(self):
+    def start(self, handlers: Iterable[Handler] = None):
         try:
             asyncio.get_event_loop().run_until_complete(self.connect())
         except KeyboardInterrupt:
             self.logger.info("interrupted")
         # finally:
         #     self.disconnect()
+        for handler in handlers or []:
+            self.protocol.add_message_handler(handler)
 
     def __key_exchange(self, epks_ns_port: bytes, wallet: Wallet):
 
