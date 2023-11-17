@@ -2,11 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from logging import DEBUG, basicConfig
-from typing import Any, Callable, Optional, Type
+from typing import Any, Awaitable, Callable, Optional, Type
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-Handler: Type = Callable[[int, bytes], Any]
+Handler: Type = Callable[[int, bytes], Awaitable[Any]]
 
 
 def trail_off(msg: str, length: int = 40):
@@ -25,19 +25,19 @@ def now():
 
 @dataclass
 class Wallet:
-    psks: Optional[X25519PrivateKey]
     ppks: X25519PublicKey
+    psks: Optional[X25519PrivateKey] = None
 
-    esks: Optional[X25519PrivateKey]
-    epks: Optional[X25519PublicKey]
-    ns: Optional[bytes]
+    esks: Optional[X25519PrivateKey] = None
+    epks: Optional[X25519PublicKey] = None
+    ns: Optional[bytes] = None
 
-    eskc: Optional[X25519PrivateKey]
-    epkc: Optional[X25519PublicKey]
-    nc: Optional[bytes]
+    eskc: Optional[X25519PrivateKey] = None
+    epkc: Optional[X25519PublicKey] = None
+    nc: Optional[bytes] = None
 
-    token: Optional[bytes]
-    shared_secret: Optional[bytes]
+    token: Optional[bytes] = None
+    shared_secret: Optional[bytes] = None
 
 
 class ConnectionProtocolState(Enum):

@@ -8,18 +8,11 @@ from clicker.common.util import logger_config
 def main(key_file: str):
     logger_config()
     with open(key_file, "r") as f:
-        psks_bytes = bytes.fromhex(key := f.read())
-    server = SusServer("0.0.0.0", 42069, psks_bytes)
+        psks = f.read()
+    server = SusServer(("0.0.0.0", 42069), psks)
 
     # create event loop
-    loop = asyncio.get_event_loop()
-
-    try:
-        loop.run_until_complete(server.start())
-    except KeyboardInterrupt:
-        loop.run_until_complete(server.stop())
-    finally:
-        loop.close()
+    asyncio.run(server.one_port())
     print("done")
     exit(0)
 

@@ -1,39 +1,48 @@
 import asyncio
 import logging
-from datetime import datetime
-from typing import Callable
+from os import urandom
+from typing import Iterable
 
 from blake3 import blake3
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import poly1305
-from cryptography.hazmat.primitives.ciphers import Cipher, CipherContext
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.ciphers import AEADDecryptionContext, AEADEncryptionContext, Cipher
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from clicker.common.exceptions import HandsakeError, MalformedPacket
 from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import ConnectionProtocolState, Wallet, now, trail_off
+from clicker.common.util import ConnectionProtocolState, Handler, Wallet, now, trail_off
 
 
-class ClickerServerProtocol(asyncio.DatagramProtocol):
-    transport: asyncio.DatagramTransport
+class ClientHandler:
+    cl_enc: AEADDecryptionContext
+    sr_enc: AEADEncryptionContext
+    cl_mac: AEADDecryptionContext
+    sr_mac: AEADEncryptionContext
 
-    cl_enc: CipherContext
-    sr_enc: CipherContext
-    cl_mac: CipherContext
-    sr_mac: CipherContext
+    protocol: bytes
 
-    counter: int = 0
-
-    def __init__(self, wallet: Wallet, on_close: Callable = lambda _: None):
-        super().__init__()
-
-        self.wallet = wallet
-        self.on_close = on_close
-
-        self.logger = logging.getLogger(f"clicker{ClickerServerProtocol.counter:03d}")
-
-        self.state = ConnectionProtocolState.INITIAL
+    def __init__(self, addr: tuple[str, int], transport: asyncio.DatagramTransport, wallet: Wallet, data: bytes,
+                 message_handlers: Iterable[Handler]):
         self.last_seen = now()
+        self.addr = addr
+        self.transport = transport
+        self.message_handlers = set(message_handlers)
+
+        self.logger = logging.getLogger(f"{addr[0]}:{addr[1]}")
+
+        if len(data) != 40:
+            self.logger.error("Invalid handshake packet")
+            raise MalformedPacket("Invalid handshake packet")
+
+        wallet.esks = X25519PrivateKey.generate()
+        wallet.epks = wallet.esks.public_key()
+        wallet.ns = urandom(8)
+        wallet.epkc = X25519PublicKey.from_public_bytes(data[:32])
+        wallet.nc = data[32:]
+        self.wallet = wallet
 
         self.client_message_id = 0
         self.server_message_id = 0
@@ -42,16 +51,84 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
 
         self.mtu_estimate = 1500
 
-        ClickerServerProtocol.counter += 1
-
-    def connection_made(self, transport: asyncio.DatagramTransport):
-        self.transport = transport
         self.state = ConnectionProtocolState.HANDSHAKE
+        self.transport.sendto((wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) + wallet.ns), self.addr)
+        self.logger.info("Sent keys")
 
-    def check_alive(self):
-        if self.state in (ConnectionProtocolState.ERROR,
-                          ConnectionProtocolState.DISCONNECTED) or datetime.now().timestamp() - self.last_seen > 5:
-            self.disconnect()
+    @property
+    def is_alive(self):
+        return self.state not in (
+            ConnectionProtocolState.ERROR, ConnectionProtocolState.DISCONNECTED
+        ) and now() - self.last_seen < 5
+
+    def handle(self, data: bytes):
+        self.last_seen = now()
+
+        match self.state:
+            case ConnectionProtocolState.HANDSHAKE:
+                self.__handshake(data)
+            case ConnectionProtocolState.CONNECTED:
+                self.__connected(data)
+            case ConnectionProtocolState.DISCONNECTED:
+                self.__disconnected(data)
+            case ConnectionProtocolState.ERROR:
+                self.__error(data)
+            case ConnectionProtocolState.INITIAL:
+                self.__initial(data)
+
+    def __handshake(self, data) -> None:
+        if len(data) < 40:
+            self.logger.error("Invalid handshake packet")
+            self.state = ConnectionProtocolState.ERROR
+            raise MalformedPacket("Invalid handshake packet")
+        wallet = self.wallet
+        self.logger.info("\n".join([
+            f"epkc: {wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw).hex()}",
+            f"epks: {wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex()}",
+            f"nc: {wallet.nc.hex()}",
+            f"ns: {wallet.ns.hex()}"
+        ]))
+        wallet.token = blake3(wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+                              wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+                              wallet.nc + wallet.ns).digest()
+        client_token = data[8:40]
+
+        self.logger.debug(f"token: {client_token.hex()}")
+
+        if client_token != wallet.token:
+            self.logger.debug(f"ours : {self.wallet.token.hex()}")
+            self.logger.error("token mismatch!")
+            raise HandsakeError("Token mismatch")
+
+        self.logger.debug("token: OK")
+
+        self.__key_exchange()
+
+        message = self.__verify_and_decrypt(data)
+        if message is None:
+            self.state = ConnectionProtocolState.ERROR
+            raise HandsakeError("Invalid handshake packet (missing protocol)")
+
+        self.state = ConnectionProtocolState.CONNECTED
+        self.protocol = message
+        self.logger.info("Handshake complete")
+        self.logger.debug(f"protocol: {message.decode('utf-8')}")
+
+    def __key_exchange(self):
+        wallet = self.wallet
+        eces = wallet.esks.exchange(wallet.epkc)
+        ecps = wallet.psks.exchange(wallet.epkc)
+        wallet.shared_secret = blake3(
+            eces + ecps + wallet.nc + wallet.ns +
+            wallet.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
+            wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
+        self.logger.debug(f"shared_secret: {wallet.shared_secret.hex()}")
+        # noinspection DuplicatedCode
+        self.cl_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).decryptor()
+        self.sr_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).encryptor()
+        self.cl_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
+        self.sr_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).encryptor()
 
     def __verify_and_decrypt(self, data: bytes) -> bytes | None:
         try:
@@ -73,97 +150,99 @@ class ClickerServerProtocol(asyncio.DatagramProtocol):
         message_length = int.from_bytes(message_bytes[:4], "little")
         message = message_bytes[4:message_length + 4]
         self.logger.info(f"Received message {p_id} ({message_length} bytes)")
-        self.last_seen = datetime.now().timestamp()
         self.client_packet_id = p_id
         return message
 
-    def __encrypt_and_tag(self, data: bytes) -> bytes:
+    def __connected(self, data):
+        message = self.__verify_and_decrypt(data)
+        self.logger.info(f">>> {trail_off(message.decode('utf-8')) if message else None}")
+
+        # for now, just echo back
+        if message:
+            self.send(message)
+
+    def send(self, data: bytes):
+        if self.state not in (ConnectionProtocolState.CONNECTED, ConnectionProtocolState.HANDSHAKE):
+            return
+        self.logger.info(f"<<< {trail_off(data.decode('utf-8'))}")
+        packets = self.__encrypt_and_tag(data)
+        self.logger.info(f"Sending {len(data)} bytes in {len(packets)} packets")
+        for packet in packets:
+            self.transport.sendto(packet, self.addr)
+
+    def __encrypt_and_tag(self, data: bytes) -> list[bytes]:
         message_bytes = len(data).to_bytes(4, "little") + data
         packet_length = self.mtu_estimate - 24
         padded_message_bytes = message_bytes + b"\x00" * (
-                packet_length - ((len(message_bytes) + 0) % packet_length))
+                packet_length - ((len(message_bytes)) % packet_length))
 
         ciphertext = self.sr_enc.update(padded_message_bytes)
         self.logger.debug(f"--- {trail_off(ciphertext.hex())}")
 
-        key = self.sr_mac.update(b"\x00" * 32)
-        p_id = self.server_packet_id.to_bytes(8, "little")
-        frame = p_id + ciphertext
-        tag = poly1305.Poly1305.generate_tag(key, frame)
-        self.server_packet_id += 1
-        return frame + tag
+        payloads = self.__split_message(ciphertext)
 
-    def __key_exchange(self):
-        wallet = self.wallet
-        eces = wallet.esks.exchange(wallet.epkc)
-        ecps = wallet.psks.exchange(wallet.epkc)
-        wallet.shared_secret = blake3(
-            eces + ecps + wallet.nc + wallet.ns +
-            wallet.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-            wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-            wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw)).digest()
-        self.logger.debug(f"shared_secret: {wallet.shared_secret.hex()}")
-        # noinspection DuplicatedCode
-        self.cl_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_ENC_NONCE), None).decryptor()
-        self.sr_enc = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_ENC_NONCE), None).encryptor()
-        self.cl_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + CLIENT_MAC_NONCE), None).decryptor()
-        self.sr_mac = Cipher(ChaCha20(wallet.shared_secret, b"\x00" * 8 + SERVER_MAC_NONCE), None).encryptor()
+        packets = []
+        for payload in payloads:
+            key = self.sr_mac.update(b"\x00" * 32)
+            p_id = self.client_packet_id.to_bytes(8, "little")
+            frame = p_id + payload
+            tag = poly1305.Poly1305.generate_tag(key, frame)
+            packets.append(frame + tag)
+            self.client_packet_id += 1
+        return packets
 
-    def datagram_received(self, data: bytes, addr: tuple[str, int]):
+    def __split_message(self, data: bytes) -> list[bytes]:
+        packet_length = self.mtu_estimate - 24
+        return [data[i:i + packet_length] for i in range(0, len(data), packet_length)]
 
-        match self.state:
-            case ConnectionProtocolState.HANDSHAKE:
-                if len(data) < 40:
-                    self.logger.error("Invalid handshake packet")
-                    self.state = ConnectionProtocolState.ERROR
-                    self.disconnect()
-                    return
 
-                wallet = self.wallet
-                wallet.token = blake3(wallet.epkc.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-                                      wallet.epks.public_bytes(Encoding.Raw, PublicFormat.Raw) +
-                                      wallet.nc + wallet.ns).digest()
-                client_token = data[8:40]
+class OnePortProtocol(asyncio.DatagramProtocol):
+    transport: asyncio.DatagramTransport
 
-                self.logger.debug(f"token: {client_token.hex()}")
+    def __init__(self, wallet: Wallet, message_handlers: Iterable[Handler]):
+        super().__init__()
+        self.wallet = wallet
+        self.message_handlers = message_handlers
 
-                if client_token != wallet.token:
-                    self.logger.debug(f"ours : {self.wallet.token.hex()}")
-                    self.logger.error("token mismatch!")
+        self.clients: dict[tuple[str, int], ClientHandler] = dict()
+        self.logger = logging.getLogger(f"OnePort")
 
-                    self.state = ConnectionProtocolState.ERROR
-                    self.disconnect()
-                    return
-                self.logger.debug("token: OK")
+        self.tasks: set[asyncio.Task] = set()
+        self.closed = asyncio.Event()
 
-                self.__key_exchange()
+    def connection_made(self, transport: asyncio.DatagramTransport):
+        self.transport = transport
+        self.logger.info(f"Listening on port {transport.get_extra_info('sockname')[1]}")
 
-                self.state = ConnectionProtocolState.CONNECTED
-                self.logger.debug("Handshake complete")
+    def error_received(self, exc):
+        self.logger.exception(exc)
 
-                message = self.__verify_and_decrypt(data)
-                if message is None:
-                    self.state = ConnectionProtocolState.ERROR
-                    self.disconnect()
-                    return
+    def datagram_received(self, data, addr):
+        if addr not in self.clients:
+            try:
+                c = ClientHandler(addr, self.transport, self.wallet, data, self.message_handlers)
+            except (HandsakeError, MalformedPacket):
+                self.logger.error(f"Handshake failed with {addr}")
+                return
+            self.clients[addr] = c
+            self.logger.info(f"New client {addr}")
+            return
 
-                self.logger.info(f"protocol: {message.decode('utf-8')}")
+        handler = self.clients[addr]
 
-            case ConnectionProtocolState.CONNECTED:
-                message = self.__verify_and_decrypt(data)
-                self.logger.info(f"{addr[0]}:{addr[1]} >>> "
-                                 f"{trail_off(message.decode('utf-8')) if message else None}")
+        try:
+            handler.handle(data)
+        except HandsakeError:
+            self.logger.error(f"Handshake failed with {addr}")
+            del self.clients[addr]
+            self.close()
+        except MalformedPacket:
+            self.logger.error(f"Malformed packet from {addr}")
+            del self.clients[addr]
 
-                # for now, just echo back
-                if message:
-                    self.transport.sendto(self.__encrypt_and_tag(message), addr)
-
-        self.last_seen = now()
-
-    def disconnect(self):
-        self.logger.warning("Disconnecting...")
+    def close(self):
         self.transport.close()
 
-    def connection_lost(self, exc: Exception):
-        self.logger.warning("Connection lost" + (f": {exc}" if exc else ""))
-        self.on_close(exc)
+    def connection_lost(self, exc):
+        self.logger.info("Connection closed")
+        self.closed.set()

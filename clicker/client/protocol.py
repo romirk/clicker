@@ -128,9 +128,4 @@ class ClickerClientProtocol(asyncio.DatagramProtocol):
         self.diconnection_event.set()
 
     def handle_message(self, pid, message):
-        for handler in self.message_handlers:
-            try:
-                handler(pid, message)
-            except Exception as e:
-                self.logger.exception(e)
-                self.logger.error("Error in message handler. See traceback above.")
+        asyncio.gather(*[handler(pid, message) for handler in self.message_handlers])

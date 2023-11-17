@@ -1,28 +1,31 @@
 import argparse
-
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+import asyncio
+import logging
 
 from clicker import SusClient
 from clicker.common.util import logger_config
 
-
-def msg_handler(msg_id: int, msg: bytes):
-    print(f"Received message {msg_id}: {msg.decode()}")
+logger = logging.getLogger("app")
 
 
-def main(host: str, port: int, key: str):
+async def msg_handler(msg_id: int, msg: bytes):
+    logger.info(f"Received message {msg_id}: {msg.decode()}")
+
+
+async def main(host: str, port: int, key: str):
     logger_config()
+
     with open(key, "r") as f:
-        ppks_bytes = bytes.fromhex(key := f.read())
+        key = f.read()
         print(f"Using public key \033[36m{key}\033[0m")
-    ppks = X25519PublicKey.from_public_bytes(ppks_bytes)
-    client = SusClient(host, port, ppks, b"cliq")
-    client.start([msg_handler])
-    if not client.connected:
+    client = SusClient((host, port), key, b"cliq")
+    try:
+        await client.start([msg_handler])
+    except (TimeoutError, ConnectionError):
         exit(1)
     client.send(b"hello world")
     client.send(b"goodbye world")
-    client.keep_alive()
+    await client.keep_alive()
     exit(0)
 
 
@@ -32,4 +35,4 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=42069, help="port")
     parser.add_argument("--key", type=str, default="server.pub", help="key file")
     args = parser.parse_args()
-    main(args.host, args.port, args.key)
+    asyncio.run(main(args.host, args.port, args.key))
