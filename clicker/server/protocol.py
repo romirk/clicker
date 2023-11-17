@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from clicker.common.exceptions import HandsakeError, MalformedPacket
 from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import ConnectionProtocolState, Handler, Wallet, now, trail_off
+from clicker.common.util import ConnectionProtocolState, MessageHandler, Wallet, now, trail_off
 
 
 class ClientHandler:
@@ -25,7 +25,7 @@ class ClientHandler:
     protocol: bytes
 
     def __init__(self, addr: tuple[str, int], transport: asyncio.DatagramTransport, wallet: Wallet, data: bytes,
-                 message_handlers: Iterable[Handler]):
+                 message_handlers: Iterable[MessageHandler]):
         self.last_seen = now()
         self.addr = addr
         self.transport = transport
@@ -157,9 +157,8 @@ class ClientHandler:
         message = self.__verify_and_decrypt(data)
         self.logger.info(f">>> {trail_off(message.decode('utf-8')) if message else None}")
 
-        # for now, just echo back
         if message:
-            self.send(message)
+            asyncio.gather(*[handler(self.client_message_id, message) for handler in self.message_handlers])
 
     def send(self, data: bytes):
         if self.state not in (ConnectionProtocolState.CONNECTED, ConnectionProtocolState.HANDSHAKE):
@@ -199,12 +198,12 @@ class ClientHandler:
 class OnePortProtocol(asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport
 
-    def __init__(self, wallet: Wallet, message_handlers: Iterable[Handler]):
+    def __init__(self, wallet: Wallet, message_handlers: Iterable[MessageHandler]):
         super().__init__()
         self.wallet = wallet
         self.message_handlers = message_handlers
 
-        self.clients: dict[tuple[str, int], ClientHandler] = dict()
+        self.__clients: dict[tuple[str, int], ClientHandler] = dict()
         self.logger = logging.getLogger(f"OnePort")
 
         self.tasks: set[asyncio.Task] = set()
@@ -218,27 +217,38 @@ class OnePortProtocol(asyncio.DatagramProtocol):
         self.logger.exception(exc)
 
     def datagram_received(self, data, addr):
-        if addr not in self.clients:
+        if addr not in self.__clients:
             try:
                 c = ClientHandler(addr, self.transport, self.wallet, data, self.message_handlers)
             except (HandsakeError, MalformedPacket):
                 self.logger.error(f"Handshake failed with {addr}")
                 return
-            self.clients[addr] = c
+            self.__clients[addr] = c
             self.logger.info(f"New client {addr}")
             return
 
-        handler = self.clients[addr]
+        handler = self.__clients[addr]
 
         try:
             handler.handle(data)
         except HandsakeError:
             self.logger.error(f"Handshake failed with {addr}")
-            del self.clients[addr]
+            del self.__clients[addr]
             self.close()
         except MalformedPacket:
             self.logger.error(f"Malformed packet from {addr}")
-            del self.clients[addr]
+            del self.__clients[addr]
+
+    def send(self, data: bytes, addr: tuple[str, int]):
+        self.__clients[addr].send(data)
+
+    def add_message_handler(self, handler: MessageHandler, addr: tuple[str, int]):
+        self.__clients[addr].message_handlers.add(handler)
+
+    def clean(self):
+        for addr in list(self.__clients.keys()):
+            if not self.__clients[addr].is_alive:
+                del self.__clients[addr]
 
     def close(self):
         self.transport.close()

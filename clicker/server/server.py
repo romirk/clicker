@@ -5,7 +5,7 @@ from typing import Iterable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from clicker.common.util import Handler, Wallet, now
+from clicker.common.util import MessageHandler, Wallet
 from clicker.server.protocol import OnePortProtocol
 
 
@@ -22,21 +22,16 @@ class SusServer:
         with open("server.pub", "w") as f:
             f.write(self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex())
 
-        self.shutdown = asyncio.Event()
-
     async def __garbage_collector(self):
-        while not self.shutdown.is_set():
+        while not self.protocol.closed.is_set():
             try:
                 await asyncio.sleep(10)
-                for addr in list(self.protocol.clients.keys()):
-                    if now() - self.protocol.clients[addr].last_seen > 30:
-                        self.logger.info(f"Client {addr} timed out")
-                        del self.protocol.clients[addr]
+                self.protocol.clean()
             except asyncio.CancelledError:
                 self.logger.info("Garbage collector exiting...")
                 return
 
-    async def one_port(self, message_handlers: Iterable[Handler] = None):
+    async def start(self, message_handlers: Iterable[MessageHandler] = None):
         self.logger.info("Starting server")
         self.logger.info(f"public key: {self.ppks.public_bytes(Encoding.Raw, PublicFormat.Raw).hex()}")
 
@@ -55,8 +50,8 @@ class SusServer:
         finally:
             if gc_task:
                 gc_task.cancel()
-            self.protocol.transport.close()
+            self.protocol.close()
 
     async def stop(self):
         self.logger.warning("Shutting down")
-        self.shutdown.set()
+        self.protocol.close()

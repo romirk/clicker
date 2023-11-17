@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable, Optional, Type
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-Handler: Type = Callable[[int, bytes], Awaitable[Any]]
+MessageHandler: Type = Callable[[int, bytes], Awaitable[Any]]
 
 
 def trail_off(msg: str, length: int = 40):

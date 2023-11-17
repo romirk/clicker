@@ -12,7 +12,7 @@ def main(key_file: str):
     server = SusServer(("0.0.0.0", 42069), psks)
 
     # create event loop
-    asyncio.run(server.one_port())
+    asyncio.run(server.start())
     print("done")
     exit(0)
 

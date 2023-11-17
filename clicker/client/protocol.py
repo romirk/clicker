@@ -7,14 +7,14 @@ from cryptography.hazmat.primitives.ciphers import Cipher
 from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
 
 from clicker.common.globals import CLIENT_ENC_NONCE, CLIENT_MAC_NONCE, SERVER_ENC_NONCE, SERVER_MAC_NONCE
-from clicker.common.util import ConnectionProtocolState, Handler, Wallet, now, trail_off
+from clicker.common.util import ConnectionProtocolState, MessageHandler, Wallet, now, trail_off
 
 
 class ClickerClientProtocol(asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport
 
     def __init__(self, wallet: Wallet, protcol_id: bytes,
-                 handlers: Optional[Iterable[Handler]] = None):
+                 handlers: Optional[Iterable[MessageHandler]] = None):
         super().__init__()
 
         self.wallet = wallet
@@ -37,11 +37,11 @@ class ClickerClientProtocol(asyncio.DatagramProtocol):
 
         self.mtu_estimate = 1500
 
-        self.message_handlers: set[Handler] = set(handlers or [])
+        self.message_handlers: set[MessageHandler] = set(handlers or [])
         self.handshake_event = asyncio.Event()
         self.diconnection_event = asyncio.Event()
 
-    def add_message_handler(self, handler: Handler):
+    def add_message_handler(self, handler: MessageHandler):
         self.message_handlers.add(handler)
 
     def connection_made(self, transport: asyncio.DatagramTransport):
