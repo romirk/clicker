@@ -3,12 +3,12 @@ import asyncio
 import logging
 
 from clicker import SusClient
-from clicker.common.util import logger_config
+from clicker.common.util import Address, logger_config
 
 logger = logging.getLogger("app")
 
 
-async def msg_handler(msg_id: int, msg: bytes):
+async def msg_handler(_: Address, msg_id: int, msg: bytes):
     logger.info(f"Received message {msg_id}: {msg.decode()}")
 
 

@@ -52,6 +52,9 @@ class SusServer:
                 gc_task.cancel()
             self.protocol.close()
 
+    async def send(self, addr: tuple[str, int], msg: bytes):
+        await self.protocol.send(msg, addr)
+
     async def stop(self):
         self.logger.warning("Shutting down")
         self.protocol.close()

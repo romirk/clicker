@@ -160,7 +160,7 @@ class ClientHandler:
         if message:
             asyncio.gather(*[handler(self.client_message_id, message) for handler in self.message_handlers])
 
-    def send(self, data: bytes):
+    async def send(self, data: bytes):
         if self.state not in (ConnectionProtocolState.CONNECTED, ConnectionProtocolState.HANDSHAKE):
             return
         self.logger.info(f"<<< {trail_off(data.decode('utf-8'))}")
@@ -239,8 +239,11 @@ class OnePortProtocol(asyncio.DatagramProtocol):
             self.logger.error(f"Malformed packet from {addr}")
             del self.__clients[addr]
 
-    def send(self, data: bytes, addr: tuple[str, int]):
-        self.__clients[addr].send(data)
+    async def send(self, data: bytes, addr: tuple[str, int]):
+        if addr not in self.__clients:
+            self.logger.error(f"Attempted to send to {addr} but they are not connected")
+            return
+        await self.__clients[addr].send(data)
 
     def add_message_handler(self, handler: MessageHandler, addr: tuple[str, int]):
         self.__clients[addr].message_handlers.add(handler)
