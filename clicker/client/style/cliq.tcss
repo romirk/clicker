@@ -1,0 +1,206 @@
+# login
+
+#login-window {
+    width: 60vw;
+    height: auto;
+    background: $background;
+    # border: red;
+}
+
+.login-title {
+    text-style: bold;
+    margin: 1;
+    width: 100%;
+    text-align: center;
+}
+
+.login-input {
+    width: 80%;
+    margin: 1;
+}
+
+.login-label {
+    # height: 100%;
+    # border: red;
+    margin-top: 2;
+    text-align: center;
+}
+
+#login-window Horizontal {
+    # text-align: left middle;
+    height: auto;
+    # border: red;
+    margin: 2;
+    
+}
+
+# -----------------------------------------------------------------------------------------------------------------
+# chat
+ChatMessage {
+    margin: 1 3;
+    width: 100%;
+    height: auto;
+}
+
+.text, .sender, .stamp {
+    padding: 0 1;
+}
+
+.text {
+    # width: 100%;
+    max-width: 100%;
+}
+
+.stamp {
+    color: $text-muted;
+}
+
+.message-container {
+    min-width: 40%;
+    max-width: 80%;
+    width: auto;
+    height: auto;
+    background: $secondary-background;
+    border: round outer $secondary-background;
+}
+
+.me {
+    align: right middle;
+}
+
+.me .message-container {
+    background: $accent;
+    border: round outer $accent;
+    align: right middle;
+}
+
+.me .sender, .me .stamp {
+    # border: red;
+    # text-align: right;
+    # align-horizontal: right;
+    width: 100%;
+}
+
+.sender {
+    text-style: bold;
+}
+
+ChatWindow {
+    border: round white;
+    margin: 1 3;
+    # height: 100%;
+}
+
+ChatTextBox {
+    height: 10%;
+    padding: 1 3 0 3;
+    align-horizontal: center;
+    background: $boost;
+}
+
+ChatTextBox Input {
+    width: 80%;
+    margin: 0 1;
+}
+
+ChatWindow ListView, ChatWindow ListItem {
+    background: $background;
+}
+
+# -----------------------------------------------------------------------------------------------------------------
+# inbox
+
+Inbox {
+    height: 100%;
+    padding: 1 3;
+    # background: $secondary-background;
+    border: round $primary;
+}
+
+
+#inbox-title {
+    margin: 1 3;
+    text-style: bold;
+    color: $accent;
+}
+
+# -----------------------------------------------------------------------------------------------------------------
+# settings
+
+#settings-title {
+    text-style: bold;
+    margin: 1;
+}
+
+Settings, #settings-list {
+    height: auto;
+    # border: red;
+}
+
+#settings-list {
+    width: 100%;
+}
+
+#settings-list-container {
+    max-width: 40vw;
+    min-width: 20vw;
+    width: 100%;
+}
+
+.settings-item {
+    padding: 1;
+}
+
+#settings-content {
+    # width: auto;
+    height: 100%;
+}
+
+.settings-content {
+    background: $boost;
+    width: 100%;
+    height: 100%;
+    # border: red;
+    padding: 1;
+}
+
+Settings Horizontal {
+    # width: 100%;
+    height: auto;
+    # border: red;
+}
+
+.settings-content-title {
+    text-style: bold;
+    margin: 1;
+    width: 100%;
+    text-align: center;
+    margin: 2;
+}
+
+.settings-setting {
+    margin: 1;
+    layout: grid;
+    grid-size: 3;
+    width: 100%;
+    align-vertical: middle;
+    # border: red;
+}
+
+.settings-setting-title {
+    text-style: bold;
+    margin: 1;
+    column-span: 2;
+    align-vertical: middle;
+    border: blank;
+    height: 100%;
+}
+
+.settings-setting-value {
+    height: 100%;
+    text-style: bold;
+    margin: 1;
+    column-span: 1;
+    align: right middle;
+    height: auto;
+}
